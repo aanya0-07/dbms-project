@@ -171,6 +171,144 @@ function App() {
 
   const handlePrint = () => window.print();
 
+  // Generate and download bill as PDF
+  const generateAndDownloadBill = () => {
+    if (products.length === 0) return;
+
+    // Calculate totals
+    const subtotal = products.reduce((s, i) => {
+      const baseName = i.name.split(' (x')[0];
+      const unit = applianceList.find(a => baseName.includes(a.name));
+      return s + ((unit?.price || 0) * (i.stockQty || 1));
+    }, 0);
+    
+    const discountAmt = subtotal * (discountRate / 100);
+    const afterDiscount = subtotal - discountAmt;
+    const taxAmt = afterDiscount * (taxRate / 100);
+    const finalTotal = afterDiscount + taxAmt;
+    const currentDate = new Date().toLocaleDateString('en-IN');
+    const currentTime = new Date().toLocaleTimeString('en-IN');
+
+    // Generate bill HTML content
+    const billHTML = `
+      <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
+        <!-- Header -->
+        <div style="text-align: center; margin-bottom: 25px; border-bottom: 3px solid #333; padding-bottom: 15px;">
+          <h1 style="margin: 0; font-size: 28px; color: #000;">⚡ ${storeSettings.storeName || 'Spark Electronics'}</h1>
+          <p style="margin: 8px 0; color: #000; font-size: 12px;">
+            ${storeSettings.address ? storeSettings.address + ' | ' : ''}${storeSettings.cityState || ''}
+          </p>
+          <p style="margin: 4px 0; color: #000; font-size: 12px;">
+            ${storeSettings.phone ? '📞 ' + storeSettings.phone : ''}${storeSettings.email ? ' | ' + storeSettings.email : ''}
+          </p>
+          ${storeSettings.gst ? `<p style="margin: 4px 0; color: #000; font-size: 12px;">GST: ${storeSettings.gst}</p>` : ''}
+        </div>
+
+        <!-- Bill Number and Date -->
+        <div style="display: flex; justify-content: space-between; margin-bottom: 20px; font-size: 12px;">
+          <div>
+            <p style="margin: 4px 0;"><strong>Bill #:</strong> ${billNumber}</p>
+            <p style="margin: 4px 0;"><strong>Date:</strong> ${currentDate}</p>
+            <p style="margin: 4px 0;"><strong>Time:</strong> ${currentTime}</p>
+          </div>
+        </div>
+
+        <!-- Customer Information -->
+        <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px; margin-bottom: 20px; border-left: 4px solid #2563eb;">
+          <h3 style="margin: 0 0 10px 0; font-size: 14px; color: #000;">Customer Information</h3>
+          <table style="width: 100%; font-size: 12px; color: #000;">
+            <tr>
+              <td style="padding: 4px 0;"><strong>Name:</strong></td>
+              <td style="padding: 4px 0;">${customerName || 'Not Provided'}</td>
+            </tr>
+            <tr>
+              <td style="padding: 4px 0;"><strong>Phone:</strong></td>
+              <td style="padding: 4px 0;">${customerPhone || 'Not Provided'}</td>
+            </tr>
+          </table>
+        </div>
+
+        <!-- Items Table -->
+        <h3 style="font-size: 14px; margin: 15px 0 10px 0; color: #000;">Items Purchased</h3>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 12px;">
+          <thead>
+            <tr style="background-color: #f0f0f0; border-bottom: 2px solid #333;">
+              <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Item</th>
+              <th style="padding: 8px; text-align: center; border: 1px solid #ddd;">Qty</th>
+              <th style="padding: 8px; text-align: right; border: 1px solid #ddd;">Unit Price</th>
+              <th style="padding: 8px; text-align: right; border: 1px solid #ddd; font-weight: bold;">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${products.map((p, idx) => {
+              const baseName = p.name.split(' (x')[0];
+              const unit = applianceList.find(a => p.name.includes(a.name));
+              const unitPrice = unit?.price || 0;
+              const qty = p.stockQty || 1;
+              const itemTotal = unitPrice * qty;
+              return `
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; border: 1px solid #ddd;">${unit?.icon || ''} ${baseName}</td>
+                  <td style="padding: 8px; text-align: center; border: 1px solid #ddd;">${qty}</td>
+                  <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">₹${unitPrice.toLocaleString('en-IN')}</td>
+                  <td style="padding: 8px; text-align: right; border: 1px solid #ddd; font-weight: bold;">₹${itemTotal.toLocaleString('en-IN')}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+
+        <!-- Totals Section -->
+        <table style="width: 100%; margin-bottom: 20px; font-size: 12px; margin-left: auto; margin-right: 0; border-collapse: collapse;">
+          <tr style="border-top: 1px solid #ddd;">
+            <td style="padding: 8px 0; text-align: right; width: 200px;">Subtotal</td>
+            <td style="padding: 8px 0 8px 15px; text-align: right; font-weight: bold; border-bottom: 1px solid #ddd;">₹${subtotal.toLocaleString('en-IN')}</td>
+          </tr>
+          ${discountRate > 0 ? `
+            <tr>
+              <td style="padding: 8px 0; text-align: right;">Discount (${discountRate}%)</td>
+              <td style="padding: 8px 0 8px 15px; text-align: right; color: #000; font-weight: bold;">-₹${discountAmt.toLocaleString('en-IN')}</td>
+            </tr>
+          ` : ''}
+          <tr>
+            <td style="padding: 8px 0; text-align: right;">Subtotal after Discount</td>
+            <td style="padding: 8px 0 8px 15px; text-align: right; font-weight: bold;">₹${afterDiscount.toLocaleString('en-IN')}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; text-align: right;">Tax/GST (${taxRate}%)</td>
+            <td style="padding: 8px 0 8px 15px; text-align: right; font-weight: bold;">+₹${taxAmt.toLocaleString('en-IN')}</td>
+          </tr>
+          <tr style="border-top: 3px solid #333; border-bottom: 3px solid #333;">
+            <td style="padding: 12px 0; text-align: right; font-size: 16px; font-weight: bold;">Grand Total</td>
+            <td style="padding: 12px 0 12px 15px; text-align: right; font-weight: bold; font-size: 18px; color: #000;">₹${finalTotal.toLocaleString('en-IN')}</td>
+          </tr>
+        </table>
+
+        <!-- Footer -->
+        <div style="text-align: center; margin-top: 20px; padding-top: 15px; border-top: 1px solid #ddd; font-size: 11px; color: #000;">
+          <p style="margin: 0;">Thank you for your purchase!</p>
+          <p style="margin: 5px 0 0 0;">This is a computer-generated receipt. No signature required.</p>
+        </div>
+      </div>
+    `;
+
+    // Create a temporary element to hold the HTML
+    const element = document.createElement('div');
+    element.innerHTML = billHTML;
+
+    // Configure PDF options
+    const options = {
+      margin: 8,
+      filename: `Bill_${billNumber}_${new Date().getTime()}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, letterRendering: true },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    // Generate and download PDF
+    html2pdf().set(options).from(element).save();
+  };
+
   const handleCheckout = async () => {
     if (products.length === 0) { showToast('Add items to the bill before checking out.', 'warning'); return; }
 
@@ -178,16 +316,23 @@ function App() {
     const total   = products.reduce((s, i) => s + i.price, 0);
 
     try {
+      // Download bill as PDF first
+      generateAndDownloadBill();
+      
+      // Then save to history
       await axios.post(`${API}/products/save-final-bill`, {
           summary: summary,
           total: total
       });
-      alert("✅ Transaction Completed & Saved to History!");
-      fetchProducts();    // Clears the active screen
-      fetchHistory(); // Updates the history table below
+      showToast('✅ Bill downloaded & transaction saved to history!', 'success');
+      setProducts([]); // Clear the bill
+      setCustomerName(''); // Clear customer details
+      setCustomerPhone('');
+      setBillNumber(generateBillNumber()); // Generate next bill number
+      fetchHistory(); // Updates the history table
     } catch (error) {
       console.error('Checkout error:', error.response?.data || error.message);
-      alert("Checkout failed: " + (error.response?.data?.message || error.message));
+      showToast('Checkout failed: ' + (error.response?.data?.message || error.message), 'error');
     }
   };
 

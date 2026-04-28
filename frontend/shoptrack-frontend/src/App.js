@@ -1,183 +1,318 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import html2pdf from 'html2pdf.js';
+
+import { Toast, useToast } from './components/Toast';
+import { BillingTab }      from './components/BillingTab';
+import { InventoryTab }    from './components/InventoryTab';
+import { HistoryTab }      from './components/HistoryTab';
+import { SettingsTab }     from './components/SettingsTab';
+import { generateBillNumber } from './utils/CouponManager';
+
+const API = 'http://localhost:8080/api';
+
+// Configure axios for better network handling
+axios.defaults.timeout = 10000;
+axios.defaults.headers.common['Content-Type'] = 'application/json';
+
+const APPLIANCE_LIST = [
+  { name: 'Refrigerator', icon: '🧊', price: 25000 },
+  { name: 'Washing Machine', icon: '🌊', price: 18000 },
+  { name: 'Microwave Oven', icon: '🔥', price: 8000 },
+  { name: 'Air Conditioner', icon: '❄️', price: 35000 },
+  { name: 'LED TV', icon: '📺', price: 22000 },
+];
+
+const EMPTY_INVENTORY = {
+  'Refrigerator': 0, 'Washing Machine': 0,
+  'Microwave Oven': 0, 'Air Conditioner': 0, 'LED TV': 0,
+};
+
+const DEFAULT_SETTINGS = {
+  storeName: 'Spark Electronics',
+  ownerName: '',
+  phone: '',
+  email: '',
+  address: '',
+  cityState: '',
+  gst: '',
+  paymentMethods: ['cash', 'card'],
+  coupons: {},
+  newCouponCode: '',
+  newCouponDiscount: 0,
+};
+
+const NAV = [
+  { id: 'bill',      label: 'Billing',   icon: '🧾' },
+  { id: 'inventory', label: 'Inventory', icon: '📦' },
+  { id: 'history',   label: 'History',   icon: '📜' },
+  { id: 'settings',  label: 'Settings',  icon: '⚙️' },
+];
 
 function App() {
-  // 1. STATE MANAGEMENT
-  const [products, setProducts] = useState([]);
+  // ── STATE ──────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState('bill');
+  const [products, setProducts]   = useState([]);
   const [salesHistory, setSalesHistory] = useState([]);
+  const [inventory, setInventory] = useState(EMPTY_INVENTORY);
+  const [billNumber, setBillNumber] = useState(generateBillNumber());
+  const [applianceList, setApplianceList] = useState(() => {
+    const saved = localStorage.getItem('shoptrack_appliances');
+    return saved ? JSON.parse(saved) : APPLIANCE_LIST;
+  });
+
+  // Store Settings
+  const [storeSettings, setStoreSettings] = useState(() => {
+    const saved = localStorage.getItem('shoptrack_settings');
+    return saved ? JSON.parse(saved) : DEFAULT_SETTINGS;
+  });
+
+  // Billing inputs
   const [selectedItem, setSelectedItem] = useState('Refrigerator');
-  const [quantity, setQuantity] = useState(1);
+  const [quantity, setQuantity]         = useState(1);
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [taxRate, setTaxRate] = useState(18);
+  const [discountRate, setDiscountRate] = useState(0);
 
-  // 2. FIXED APPLIANCE DATA
-  const applianceList = [
-    { name: 'Refrigerator', price: 45000 },
-    { name: 'Washing Machine', price: 32000 },
-    { name: 'Microwave Oven', price: 15000 },
-    { name: 'Air Conditioner', price: 55000 },
-    { name: 'LED TV', price: 48000 }
-  ];
+  // Inventory edit state
+  const [editingItem, setEditingItem] = useState(null);
+  const [editValue, setEditValue]     = useState(0);
 
-  // 3. API CALLS (TALKING TO INTELLIJ)
-  const fetchBill = async () => {
-    const response = await axios.get('http://localhost:8080/api/products');
-    setProducts(response.data);
+  const { toasts, showToast, removeToast } = useToast();
+
+  // ── DATA FETCHING ──────────────────────────────────
+  const checkBackendHealth = async () => {
+    try {
+      const response = await axios.get(`${API}/products`, { timeout: 5000 });
+      console.log('✅ Backend is connected');
+      return true;
+    } catch (err) {
+      console.error('❌ Backend connection failed:', err.message);
+      showToast('⚠️ Backend not reachable. Make sure Spring Boot is running on http://localhost:8080', 'warning');
+      return false;
+    }
+  };
+
+  const fetchProducts = async () => {
+    try { 
+      const r = await axios.get(`${API}/products`); 
+      setProducts(r.data); 
+    }
+    catch (err) { 
+      console.error('Error fetching products:', err.message); 
+    }
   };
 
   const fetchHistory = async () => {
+    try { 
+      const r = await axios.get(`${API}/products/history`); 
+      setSalesHistory(r.data); 
+    }
+    catch (err) { 
+      console.error('Error loading history:', err.message); 
+    }
+  };
+
+  const fetchInventory = async () => {
     try {
-      const response = await axios.get('http://localhost:8080/api/products/history');
-      setSalesHistory(response.data);
-    } catch (error) {
-      console.error("Error loading history", error);
+      const r = await axios.get(`${API}/inventory`);
+      setInventory(r.data);
+    } catch {
+      const saved = localStorage.getItem('shoptrack_inventory');
+      if (saved) setInventory(JSON.parse(saved));
     }
   };
 
   useEffect(() => {
-    fetchBill();
+    console.log('App initialized. Checking backend connection...');
+    checkBackendHealth();
+    fetchProducts();
     fetchHistory();
+    fetchInventory();
   }, []);
 
-  // 4. BUTTON LOGIC
-  const addToBill = async () => {
+  // Save settings to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('shoptrack_settings', JSON.stringify(storeSettings));
+  }, [storeSettings]);
+
+  // Save appliances to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('shoptrack_appliances', JSON.stringify(applianceList));
+  }, [applianceList]);
+
+  // ── BILLING ACTIONS ────────────────────────────────
+  const handleAddToBill = async () => {
+    const stock = inventory[selectedItem] || 0;
+    if (stock === 0) { showToast(`${selectedItem} is out of stock.`, 'error'); return; }
+    if (stock < quantity) { showToast(`Only ${stock} unit(s) available for ${selectedItem}.`, 'warning'); return; }
     try {
-      await axios.post('http://localhost:8080/api/products/validate-and-add', { 
-        name: selectedItem,
-        quantity: quantity
-      });
-      fetchBill();
+      await axios.post(`${API}/products/validate-and-add`, { name: selectedItem, quantity });
+      fetchProducts();
       setQuantity(1);
+      showToast(`${selectedItem} × ${quantity} added to bill.`, 'success');
     } catch (error) {
-      alert("Error adding to bill. Check if Java is running!");
+      console.error('Add to bill error:', error.response?.data || error.message);
+      showToast(`Error: ${error.response?.data?.message || error.message}`, 'error');
     }
   };
 
-  const saveAndCheckout = async () => {
-    if (products.length === 0) return alert("Add items to the bill first!");
-
-    const summary = products.map(p => p.name).join(", ");
-    const total = products.reduce((s, i) => s + i.price, 0);
-    
-    try {
-      await axios.post('http://localhost:8080/api/products/save-final-bill', {
-          summary: summary,
-          total: total
-      });
-      alert("✅ Transaction Completed & Saved to History!");
-      fetchBill();    // Clears the active screen
-      fetchHistory(); // Updates the history table below
-    } catch (error) {
-      alert("Save failed. Check console for details.");
+  const handleRemove = async (id) => {
+    try { 
+      await axios.delete(`${API}/products/${id}`); 
+      fetchProducts(); 
     }
-  };
-
-  const deleteProduct = async (id) => {
-    await axios.delete(`http://localhost:8080/api/products/${id}`);
-    fetchBill();
+    catch (error) { 
+      console.error('Remove error:', error.response?.data || error.message);
+      showToast('Could not remove item: ' + error.message, 'error'); 
+    }
   };
 
   const handlePrint = () => window.print();
 
-  // 5. THE USER INTERFACE
+  const handleCheckout = async () => {
+    if (products.length === 0) { showToast('Add items to the bill before checking out.', 'warning'); return; }
+
+    const summary = products.map(p => p.name).join(', ');
+    const total   = products.reduce((s, i) => s + i.price, 0);
+
+    try {
+      await axios.post(`${API}/products/save-final-bill`, {
+          summary: summary,
+          total: total
+      });
+      alert("✅ Transaction Completed & Saved to History!");
+      fetchProducts();    // Clears the active screen
+      fetchHistory(); // Updates the history table below
+    } catch (error) {
+      console.error('Checkout error:', error.response?.data || error.message);
+      alert("Checkout failed: " + (error.response?.data?.message || error.message));
+    }
+  };
+
+  const deleteProduct = async (id) => {
+    await axios.delete(`${API}/products/${id}`);
+    fetchProducts();
+  };
+
+  // ── INVENTORY ACTIONS ──────────────────────────────
+  const persistInventory = async (itemName, newStock) => {
+    const updated = { ...inventory, [itemName]: Math.max(0, newStock) };
+    setInventory(updated);
+    localStorage.setItem('shoptrack_inventory', JSON.stringify(updated));
+    try { await axios.put(`${API}/inventory/${itemName}`, { stock: updated[itemName] }); }
+    catch { /* persisted locally */ }
+  };
+
+  const handleAdjust = (name, delta) => {
+    persistInventory(name, (inventory[name] || 0) + delta);
+  };
+
+  const handleSetExact = (name, value) => {
+    persistInventory(name, value);
+    setEditingItem(null);
+  };
+
+  // ── RENDER ─────────────────────────────────────────
+  const PAGE_TITLES = {
+    bill:      { title: '🧾 Billing',          sub: 'Create and manage the current customer bill' },
+    inventory: { title: '📦 Inventory',        sub: 'Monitor and adjust stock levels' },
+    history:   { title: '📜 Sales History',    sub: 'Review past transactions and revenue' },
+    settings:  { title: '⚙️ Settings',          sub: 'Configure store information and payment methods' },
+  };
+
   return (
-    <div style={{ padding: '40px', maxWidth: '1000px', margin: 'auto', fontFamily: 'Segoe UI, sans-serif' }}>
-      <style>
-        {`
-          @media print { .no-print { display: none !important; } }
-          .col-desc { width: 45%; }
-          .col-qty { width: 15%; text-align: center; }
-          .col-uprice { width: 20%; text-align: right; }
-          .col-total { width: 20%; text-align: right; }
-          th { border-bottom: 2px solid #333; padding: 10px 0; }
-        `}
-      </style>
+    <div className="app-layout">
+      <Toast toasts={toasts} removeToast={removeToast} />
 
-      <h1 style={{ textAlign: 'center', color: '#2c3e50' }}>⚡ Spark Electronics Ltd.</h1>
-      <p style={{ textAlign: 'center', color: '#7f8c8d' }} className="no-print">Premium Appliances Management System</p>
-
-      {/* INPUT SECTION */}
-      <div className="no-print" style={{ backgroundColor: '#f4f7f6', padding: '20px', borderRadius: '10px', display: 'flex', gap: '15px', alignItems: 'flex-end', marginBottom: '30px' }}>
-        <div style={{ flex: 2 }}>
-          <label>Select Appliance:</label>
-          <select value={selectedItem} onChange={(e) => setSelectedItem(e.target.value)} style={{ width: '100%', padding: '10px', marginTop: '5px' }}>
-            {applianceList.map(item => <option key={item.name} value={item.name}>{item.name} (₹{item.price})</option>)}
-          </select>
-        </div>
-        
-        <div style={{ flex: 1 }}>
-          <label>Quantity:</label>
-          <input type="number" min="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} style={{ width: '100%', padding: '10px', marginTop: '5px' }} />
+      {/* ── SIDEBAR ── */}
+      <nav className="sidebar">
+        <div className="sidebar-brand">
+          <div className="brand-logo">⚡ Spark Electronics</div>
+          <div className="brand-sub">Inventory & Billing System</div>
         </div>
 
-        <button onClick={addToBill} style={{ padding: '10px 25px', backgroundColor: '#2ecc71', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', height: '40px', fontWeight: 'bold' }}>
-          Add Item
-        </button>
-      </div>
-
-      {/* ACTIVE BILL TABLE */}
-      <div style={{ minHeight: '300px' }}>
-        <div style={{ display: 'flex', fontWeight: 'bold', borderBottom: '2px solid #2c3e50', paddingBottom: '10px' }}>
-          <span className="col-desc">ITEM DESCRIPTION</span>
-          <span className="col-qty">QTY</span>
-          <span className="col-uprice">UNIT PRICE</span>
-          <span className="col-total">TOTAL</span>
+        <div className="sidebar-nav">
+          {NAV.map(({ id, label, icon }) => (
+            <button
+              key={id}
+              className={`nav-item ${activeTab === id ? 'active' : ''}`}
+              onClick={() => setActiveTab(id)}
+            >
+              <span className="nav-icon">{icon}</span>
+              {label}
+              {id === 'bill' && products.length > 0 && (
+                <span className="nav-badge">{products.length}</span>
+              )}
+            </button>
+          ))}
         </div>
 
-        {products.map(p => {
-          const unitPrice = applianceList.find(a => p.name.includes(a.name))?.price || 0;
-          return (
-            <div key={p.id} style={{ display: 'flex', padding: '15px 0', borderBottom: '1px solid #eee', alignItems: 'center' }}>
-              <span className="col-desc">
-                {p.name.split(" (x")[0]}
-                <button onClick={() => deleteProduct(p.id)} className="no-print" style={{ marginLeft: '10px', color: 'red', border: 'none', background: 'none', cursor: 'pointer', fontSize: '12px' }}>(Remove)</button>
-              </span>
-              <span className="col-qty">{p.stockQty}</span>
-              <span className="col-uprice">₹{unitPrice.toLocaleString('en-IN')}</span>
-              <span className="col-total">₹{p.price.toLocaleString('en-IN')}</span>
-            </div>
-          );
-        })}
-
-        <div style={{ marginTop: '20px', textAlign: 'right' }}>
-          <h2>Grand Total: ₹{products.reduce((s, i) => s + i.price, 0).toLocaleString('en-IN')}</h2>
+        <div className="sidebar-footer">
+          v1.0 · Spark Electronics
         </div>
-      </div>
+      </nav>
 
-      {/* ACTION BUTTONS */}
-      <div className="no-print" style={{ display: 'flex', gap: '20px', marginTop: '20px' }}>
-        <button onClick={handlePrint} style={{ flex: 1, padding: '15px', backgroundColor: '#34495e', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
-          🖨️ PRINT INVOICE
-        </button>
-        <button onClick={saveAndCheckout} style={{ flex: 1, padding: '15px', backgroundColor: '#27ae60', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
-          💾 FINALIZE & SAVE SALE
-        </button>
-      </div>
+      {/* ── MAIN ── */}
+      <main className="main-content">
+        <div className="page-header">
+          <h2>{PAGE_TITLES[activeTab].title}</h2>
+          <p>{PAGE_TITLES[activeTab].sub}</p>
+        </div>
 
-      {/* SALES HISTORY - ADMIN LOG */}
-      <div className="no-print" style={{ marginTop: '80px', borderTop: '5px double #2c3e50', paddingTop: '30px' }}>
-        <h2 style={{ color: '#2c3e50', marginBottom: '20px' }}>📜 Past Sales Audit Log (Database Records)</h2>
-        <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: '#fff' }}>
-          <thead>
-            <tr style={{ backgroundColor: '#f8f9fa', borderBottom: '2px solid #2c3e50' }}>
-              <th style={{ padding: '10px', textAlign: 'left' }}>Date</th>
-              <th style={{ padding: '10px', textAlign: 'left' }}>Transaction ID</th>
-              <th style={{ padding: '10px', textAlign: 'left' }}>Summary</th>
-              <th style={{ padding: '10px', textAlign: 'right' }}>Revenue</th>
-            </tr>
-          </thead>
-          <tbody>
-            {salesHistory.map(sale => (
-              <tr key={sale.id} style={{ borderBottom: '1px solid #eee' }}>
-                <td style={{ padding: '10px' }}>{new Date(sale.saleDate).toLocaleDateString()}</td>
-                <td style={{ padding: '10px', fontFamily: 'monospace' }}>{sale.transactionId}</td>
-                <td style={{ padding: '10px', fontSize: '13px' }}>{sale.itemsSummary}</td>
-                <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold', color: '#27ae60' }}>
-                  ₹{sale.totalAmount.toLocaleString('en-IN')}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+        {activeTab === 'bill' && (
+          <BillingTab
+            applianceList={APPLIANCE_LIST}
+            products={products}
+            inventory={inventory}
+            quantity={quantity}
+            setQuantity={setQuantity}
+            selectedItem={selectedItem}
+            setSelectedItem={setSelectedItem}
+            onAddToBill={handleAddToBill}
+            onRemove={handleRemove}
+            onCheckout={handleCheckout}
+            onPrint={handlePrint}
+            customerName={customerName}
+            setCustomerName={setCustomerName}
+            customerPhone={customerPhone}
+            setCustomerPhone={setCustomerPhone}
+            taxRate={taxRate}
+            setTaxRate={setTaxRate}
+            discountRate={discountRate}
+            setDiscountRate={setDiscountRate}
+            billNumber={billNumber}
+            storeSettings={storeSettings}
+          />
+        )}
+
+        {activeTab === 'inventory' && (
+          <InventoryTab
+            applianceList={APPLIANCE_LIST}
+            inventory={inventory}
+            onAdjust={handleAdjust}
+            onSetExact={handleSetExact}
+            editingItem={editingItem}
+            setEditingItem={setEditingItem}
+            editValue={editValue}
+            setEditValue={setEditValue}
+          />
+        )}
+
+        {activeTab === 'history' && (
+          <HistoryTab salesHistory={salesHistory} />
+        )}
+
+        {activeTab === 'settings' && (
+          <SettingsTab
+            applianceList={applianceList}
+            setApplianceList={setApplianceList}
+            inventory={inventory}
+            setInventory={setInventory}
+          />
+        )}
+      </main>
     </div>
   );
 }

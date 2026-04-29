@@ -7,9 +7,10 @@ import { BillingTab }      from './components/BillingTab';
 import { InventoryTab }    from './components/InventoryTab';
 import { HistoryTab }      from './components/HistoryTab';
 import { SettingsTab }     from './components/SettingsTab';
+import { DashboardTab }    from './components/DashboardTab';
 import { generateBillNumber } from './utils/CouponManager';
 
-const API = 'http://localhost:8080/api';
+const API = process.env.REACT_APP_API_URL || 'http://localhost:8080/api';
 
 // Configure axios for better network handling
 axios.defaults.timeout = 10000;
@@ -29,7 +30,7 @@ const EMPTY_INVENTORY = {
 };
 
 const DEFAULT_SETTINGS = {
-  storeName: 'Spark Electronics',
+  storeName: 'A3 Tech',
   ownerName: '',
   phone: '',
   email: '',
@@ -43,6 +44,7 @@ const DEFAULT_SETTINGS = {
 };
 
 const NAV = [
+  { id: 'dash',      label: 'Dashboard', icon: '📊' },
   { id: 'bill',      label: 'Billing',   icon: '🧾' },
   { id: 'inventory', label: 'Inventory', icon: '📦' },
   { id: 'history',   label: 'History',   icon: '📜' },
@@ -51,7 +53,7 @@ const NAV = [
 
 function App() {
   // ── STATE ──────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState('bill');
+  const [activeTab, setActiveTab] = useState('dash');
   const [products, setProducts]   = useState([]);
   const [salesHistory, setSalesHistory] = useState([]);
   const [inventory, setInventory] = useState(EMPTY_INVENTORY);
@@ -149,9 +151,11 @@ function App() {
     if (stock < quantity) { showToast(`Only ${stock} unit(s) available for ${selectedItem}.`, 'warning'); return; }
     try {
       await axios.post(`${API}/products/validate-and-add`, { name: selectedItem, quantity });
+      // Auto-decrement inventory by the quantity added to the bill
+      await persistInventory(selectedItem, stock - quantity);
       fetchProducts();
       setQuantity(1);
-      showToast(`${selectedItem} × ${quantity} added to bill.`, 'success');
+      showToast(`${selectedItem} × ${quantity} added to bill. Stock updated.`, 'success');
     } catch (error) {
       console.error('Add to bill error:', error.response?.data || error.message);
       showToast(`Error: ${error.response?.data?.message || error.message}`, 'error');
@@ -159,9 +163,18 @@ function App() {
   };
 
   const handleRemove = async (id) => {
-    try { 
-      await axios.delete(`${API}/products/${id}`); 
-      fetchProducts(); 
+    try {
+      // Find the product being removed so we can restore its inventory
+      const removedProduct = products.find(p => p.id === id);
+      await axios.delete(`${API}/products/${id}`);
+      // Restore inventory for the removed item
+      if (removedProduct) {
+        const baseName = removedProduct.name.split(' (x')[0];
+        const qty = removedProduct.stockQty || 1;
+        const currentStock = inventory[baseName] || 0;
+        await persistInventory(baseName, currentStock + qty);
+      }
+      fetchProducts();
     }
     catch (error) { 
       console.error('Remove error:', error.response?.data || error.message);
@@ -194,7 +207,7 @@ function App() {
       <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
         <!-- Header -->
         <div style="text-align: center; margin-bottom: 25px; border-bottom: 3px solid #333; padding-bottom: 15px;">
-          <h1 style="margin: 0; font-size: 28px; color: #000;">⚡ ${storeSettings.storeName || 'Spark Electronics'}</h1>
+          <h1 style="margin: 0; font-size: 28px; color: #000;">⚡ ${storeSettings.storeName || 'A3 Tech'}</h1>
           <p style="margin: 8px 0; color: #000; font-size: 12px;">
             ${storeSettings.address ? storeSettings.address + ' | ' : ''}${storeSettings.cityState || ''}
           </p>
@@ -341,6 +354,33 @@ function App() {
     fetchProducts();
   };
 
+  const handleVoidSale = async (sale) => {
+    if (!window.confirm(`Are you sure you want to void this sale (${sale.transactionId})? Inventory will be restored.`)) return;
+    
+    try {
+      // 1. Restore inventory
+      const items = sale.itemsSummary.split(', ');
+      for (const itemStr of items) {
+        const name = itemStr.split(' (x')[0];
+        const qtyStr = itemStr.match(/\(x(\d+)\)/);
+        const qty = qtyStr ? parseInt(qtyStr[1]) : 1;
+        const currentStock = inventory[name] || 0;
+        await persistInventory(name, currentStock + qty);
+      }
+
+      // 2. Delete from history (I'll need to add this endpoint to backend or just filter it out if backend is simple)
+      // For now, I'll assume we can delete by ID if I add the endpoint
+      await axios.delete(`${API}/products/history/${sale.id}`);
+      
+      showToast('Sale voided and inventory restored.', 'success');
+      fetchHistory();
+      fetchInventory();
+    } catch (error) {
+      console.error('Void sale error:', error);
+      showToast('Failed to void sale: ' + error.message, 'error');
+    }
+  };
+
   // ── INVENTORY ACTIONS ──────────────────────────────
   const persistInventory = async (itemName, newStock) => {
     const updated = { ...inventory, [itemName]: Math.max(0, newStock) };
@@ -361,6 +401,7 @@ function App() {
 
   // ── RENDER ─────────────────────────────────────────
   const PAGE_TITLES = {
+    dash:      { title: '📊 Dashboard',        sub: 'Business overview and key performance metrics' },
     bill:      { title: '🧾 Billing',          sub: 'Create and manage the current customer bill' },
     inventory: { title: '📦 Inventory',        sub: 'Monitor and adjust stock levels' },
     history:   { title: '📜 Sales History',    sub: 'Review past transactions and revenue' },
@@ -374,7 +415,7 @@ function App() {
       {/* ── SIDEBAR ── */}
       <nav className="sidebar">
         <div className="sidebar-brand">
-          <div className="brand-logo">⚡ Spark Electronics</div>
+          <div className="brand-logo">⚡ A3 Tech</div>
           <div className="brand-sub">Inventory & Billing System</div>
         </div>
 
@@ -395,7 +436,7 @@ function App() {
         </div>
 
         <div className="sidebar-footer">
-          v1.0 · Spark Electronics
+          v1.0 · A3 Tech
         </div>
       </nav>
 
@@ -406,9 +447,17 @@ function App() {
           <p>{PAGE_TITLES[activeTab].sub}</p>
         </div>
 
+        {activeTab === 'dash' && (
+          <DashboardTab 
+            salesHistory={salesHistory} 
+            inventory={inventory} 
+            applianceList={applianceList} 
+          />
+        )}
+
         {activeTab === 'bill' && (
           <BillingTab
-            applianceList={APPLIANCE_LIST}
+            applianceList={applianceList}
             products={products}
             inventory={inventory}
             quantity={quantity}
@@ -434,7 +483,7 @@ function App() {
 
         {activeTab === 'inventory' && (
           <InventoryTab
-            applianceList={APPLIANCE_LIST}
+            applianceList={applianceList}
             inventory={inventory}
             onAdjust={handleAdjust}
             onSetExact={handleSetExact}
@@ -446,7 +495,7 @@ function App() {
         )}
 
         {activeTab === 'history' && (
-          <HistoryTab salesHistory={salesHistory} />
+          <HistoryTab salesHistory={salesHistory} onVoidSale={handleVoidSale} />
         )}
 
         {activeTab === 'settings' && (

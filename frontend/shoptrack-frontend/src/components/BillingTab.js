@@ -114,7 +114,7 @@ export function BillingTab({
 
         {/* Invoice Header for printing */}
         <div className="invoice-header-print" style={{ display: 'none' }}>
-          <h2 style={{ marginBottom: '10px' }}>⚡ Spark Electronics</h2>
+          <h2 style={{ marginBottom: '10px' }}>⚡ A3 Tech</h2>
           <p><strong>Customer:</strong> {customerName || 'N/A'}</p>
           <p><strong>Phone:</strong> {customerPhone || 'N/A'}</p>
           <p><strong>Date:</strong> {new Date().toLocaleDateString()}</p>

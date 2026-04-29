@@ -1,95 +1,167 @@
 import React from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid } from 'recharts';
 
-export function DashboardTab({ inventory, salesHistory }) {
-  // Compute low stock items
-  const lowStockThreshold = 5;
-  const lowStockItems = Object.entries(inventory)
-    .map(([name, stock]) => ({ name, stock }))
-    .filter(item => item.stock < lowStockThreshold);
+export function DashboardTab({ salesHistory, inventory, applianceList }) {
+  // ── CALCULATIONS ──────────────────────────────────
+  const totalRevenue = salesHistory.reduce((s, sale) => s + sale.totalAmount, 0);
+  const totalBills = salesHistory.length;
+  
+  // Get today's sales
+  const today = new Date().toLocaleDateString('en-IN');
+  const todaySales = salesHistory.filter(sale => 
+    new Date(sale.saleDate).toLocaleDateString('en-IN') === today
+  );
+  const todayRevenue = todaySales.reduce((s, sale) => s + sale.totalAmount, 0);
 
-  // Compute total revenue
-  const totalRevenue = salesHistory.reduce((sum, item) => sum + (item.price || 0), 0);
-  const totalItemsSold = salesHistory.length;
+  // Inventory stats
+  const lowStockCount = applianceList.filter(a => (inventory[a.name] || 0) < 5).length;
+  const outOfStockCount = applianceList.filter(a => (inventory[a.name] || 0) === 0).length;
 
-  // Prepare chart data for inventory
-  const inventoryData = Object.entries(inventory).map(([name, stock]) => ({
-    name,
-    stock
-  }));
+  // Most Popular Item (Approximate from history summaries)
+  const productCounts = {};
+  salesHistory.forEach(sale => {
+    // Basic parsing of "Item (x2), Item2 (x1)"
+    const items = sale.itemsSummary.split(', ');
+    items.forEach(itemStr => {
+      const name = itemStr.split(' (x')[0];
+      const qtyStr = itemStr.match(/\(x(\d+)\)/);
+      const qty = qtyStr ? parseInt(qtyStr[1]) : 1;
+      productCounts[name] = (productCounts[name] || 0) + qty;
+    });
+  });
 
-  // Prepare chart data for sales (grouped by date)
-  // Assuming salesHistory might not have dates, we'll mock dates or group by ID chunks if dates are missing
-  // Let's look for timestamp, if not we just show a sequence
-  const salesData = salesHistory.map((item, index) => ({
-    sequence: `Sale ${index + 1}`,
-    amount: item.price || 0
-  })).slice(-15); // Last 15 sales
+  const sortedProducts = Object.entries(productCounts)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 5);
 
   return (
     <div className="dashboard-wrapper">
+      {/* ── TOP STATS ── */}
       <div className="stats-grid">
         <div className="stat-card">
           <div className="stat-label">Total Revenue</div>
-          <div className="stat-value text-success">₹{totalRevenue.toLocaleString('en-IN')}</div>
-          <div className="stat-sub">Lifetime sales</div>
+          <div className="stat-value" style={{ color: 'var(--success)' }}>
+            ₹{totalRevenue.toLocaleString('en-IN')}
+          </div>
+          <div className="stat-sub">Lifetime earnings</div>
         </div>
+        
         <div className="stat-card">
-          <div className="stat-label">Items Sold</div>
-          <div className="stat-value">{totalItemsSold}</div>
-          <div className="stat-sub">Total products shipped</div>
+          <div className="stat-label">Today's Sales</div>
+          <div className="stat-value" style={{ color: 'var(--accent)' }}>
+            ₹{todayRevenue.toLocaleString('en-IN')}
+          </div>
+          <div className="stat-sub">{todaySales.length} bills generated today</div>
         </div>
+
         <div className="stat-card">
-          <div className="stat-label">Low Stock Alerts</div>
-          <div className="stat-value text-warning">{lowStockItems.length}</div>
-          <div className="stat-sub">Items below {lowStockThreshold} units</div>
+          <div className="stat-label">Inventory Health</div>
+          <div className="stat-value" style={{ color: lowStockCount > 0 ? 'var(--warning)' : 'var(--success)' }}>
+            {applianceList.length - lowStockCount}/{applianceList.length}
+          </div>
+          <div className="stat-sub">{lowStockCount} items need restocking</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-label">Total Transactions</div>
+          <div className="stat-value" style={{ color: 'var(--cyan)' }}>
+            {totalBills}
+          </div>
+          <div className="stat-sub">Completed checkouts</div>
         </div>
       </div>
 
-      <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '20px', marginTop: '20px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginTop: '20px' }}>
+        {/* ── TOP PRODUCTS ── */}
         <div className="card">
-          <div className="card-title">📊 Current Stock Levels</div>
-          <div style={{ width: '100%', height: 300 }}>
-            <ResponsiveContainer>
-              <BarChart data={inventoryData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-strong)" />
-                <XAxis dataKey="name" stroke="var(--text-secondary)" fontSize={12} />
-                <YAxis stroke="var(--text-secondary)" fontSize={12} />
-                <Tooltip cursor={{ fill: 'var(--bg-hover)' }} contentStyle={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border)', borderRadius: '8px' }} />
-                <Bar dataKey="stock" fill="var(--accent)" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <div className="card-title">🏆 Top Selling Products</div>
+          {sortedProducts.length === 0 ? (
+            <div className="empty-state" style={{ padding: '20px' }}>
+              <p>No sales data yet</p>
+            </div>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th className="r">Units Sold</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedProducts.map(([name, count]) => {
+                  const appliance = applianceList.find(a => name.includes(a.name));
+                  return (
+                    <tr key={name}>
+                      <td className="td-name">{appliance?.icon} {name}</td>
+                      <td className="r" style={{ fontWeight: 700, color: 'var(--accent)' }}>{count}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
         </div>
 
+        {/* ── LOW STOCK ALERTS ── */}
         <div className="card">
-          <div className="card-title">📈 Recent Sales</div>
-          <div style={{ width: '100%', height: 300 }}>
-            <ResponsiveContainer>
-              <LineChart data={salesData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-strong)" />
-                <XAxis dataKey="sequence" stroke="var(--text-secondary)" fontSize={12} />
-                <YAxis stroke="var(--text-secondary)" fontSize={12} />
-                <Tooltip contentStyle={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border)', borderRadius: '8px' }} />
-                <Line type="monotone" dataKey="amount" stroke="var(--success)" strokeWidth={3} dot={{ r: 4, fill: 'var(--bg-card)', strokeWidth: 2 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+          <div className="card-title">⚠️ Stock Alerts</div>
+          {lowStockCount === 0 && outOfStockCount === 0 ? (
+            <div className="empty-state" style={{ padding: '20px' }}>
+              <div className="empty-icon" style={{ fontSize: '2rem' }}>✅</div>
+              <p>All items in stock</p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {applianceList
+                .filter(a => (inventory[a.name] || 0) < 5)
+                .map(item => {
+                  const stock = inventory[item.name] || 0;
+                  return (
+                    <div key={item.name} className="stat-card" style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-elevated)' }}>
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{item.icon} {item.name}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Remaining: {stock} units</div>
+                      </div>
+                      <span className={`badge ${stock === 0 ? 'badge-danger' : 'badge-warning'}`}>
+                        {stock === 0 ? 'OUT' : 'LOW'}
+                      </span>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
         </div>
       </div>
 
-      {lowStockItems.length > 0 && (
-        <div className="card" style={{ marginTop: '20px', borderColor: 'var(--warning-border)', background: 'var(--warning-bg)' }}>
-          <div className="card-title" style={{ color: 'var(--warning)' }}>⚠️ Low Stock Warning</div>
-          <ul style={{ paddingLeft: '20px', color: 'var(--text-primary)' }}>
-            {lowStockItems.map(item => (
-              <li key={item.name} style={{ marginBottom: '8px' }}>
-                <strong>{item.name}</strong> — Only {item.stock} left in stock
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {/* ── RECENT ACTIVITY ── */}
+      <div className="card" style={{ marginTop: '20px' }}>
+        <div className="card-title">🕒 Recent Activity</div>
+        {salesHistory.length === 0 ? (
+          <div className="empty-state">
+            <p>No recent transactions</p>
+          </div>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Items</th>
+                <th className="r">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {salesHistory.slice(-3).reverse().map(sale => (
+                <tr key={sale.id}>
+                  <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    {new Date(sale.saleDate).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                  </td>
+                  <td style={{ fontSize: '0.85rem' }}>{sale.itemsSummary.length > 50 ? sale.itemsSummary.substring(0, 50) + '...' : sale.itemsSummary}</td>
+                  <td className="r" style={{ fontWeight: 700, color: 'var(--success)' }}>₹{sale.totalAmount.toLocaleString('en-IN')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }

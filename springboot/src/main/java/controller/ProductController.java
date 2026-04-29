@@ -81,4 +81,9 @@ public class ProductController {
         return saleRepo.findAll();
     }
 
+    @DeleteMapping("/history/{id}")
+    public void deleteSale(@PathVariable Long id) {
+        saleRepo.deleteById(id);
+    }
+
 }

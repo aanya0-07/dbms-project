@@ -6,7 +6,7 @@ function formatDate(dateStr) {
     + ' ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 }
 
-export function HistoryTab({ salesHistory }) {
+export function HistoryTab({ salesHistory, onVoidSale }) {
   const totalRevenue      = salesHistory.reduce((s, sale) => s + sale.totalAmount, 0);
   const totalTransactions = salesHistory.length;
   const avgOrder          = totalTransactions ? Math.round(totalRevenue / totalTransactions) : 0;
@@ -106,6 +106,7 @@ export function HistoryTab({ salesHistory }) {
                   <th>Customer</th>
                   <th>Items</th>
                   <th className="r">Amount</th>
+                  <th className="c">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -135,6 +136,11 @@ export function HistoryTab({ salesHistory }) {
                       <td style={{ maxWidth: 220 }}>{items}</td>
                       <td className="r" style={{ color: 'var(--success)', fontWeight: 700, fontSize: '1rem' }}>
                         ₹{sale.totalAmount.toLocaleString('en-IN')}
+                      </td>
+                      <td className="c">
+                        <button className="btn btn-danger-ghost btn-sm" onClick={() => onVoidSale(sale)}>
+                          🗑️ Void
+                        </button>
                       </td>
                     </tr>
                   )

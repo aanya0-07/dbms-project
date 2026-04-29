@@ -17,6 +17,15 @@ public class ProductController {
     private final ProductRepository repo;     // For current billing
     private final SaleRepository saleRepo;   // For permanent sales history
 
+    // Centralized product prices for easier management
+    private static final Map<String, Double> PRODUCT_PRICES = Map.of(
+            "refrigerator", 45000.00,
+            "washing machine", 32000.00,
+            "microwave oven", 15000.00,
+            "air conditioner", 55000.00,
+            "led tv", 48000.00
+    );
+
     // Constructor Injection: This tells Spring Boot to give the controller both "assistants"
     public ProductController(ProductRepository repo, SaleRepository saleRepo) {
         this.repo = repo;
@@ -35,13 +44,8 @@ public class ProductController {
         String name = (String) payload.get("name");
         int quantity = Integer.parseInt(payload.get("quantity").toString());
 
-        // FIXED PRICES for Electric Appliances Genre
-        double unitPrice = 0;
-        if (name.equalsIgnoreCase("Refrigerator")) unitPrice = 45000.00;
-        else if (name.equalsIgnoreCase("Washing Machine")) unitPrice = 32000.00;
-        else if (name.equalsIgnoreCase("Microwave Oven")) unitPrice = 15000.00;
-        else if (name.equalsIgnoreCase("Air Conditioner")) unitPrice = 55000.00;
-        else if (name.equalsIgnoreCase("LED TV")) unitPrice = 48000.00;
+        // Get unit price from the centralized map, default to 0.0 if not found
+        double unitPrice = PRODUCT_PRICES.getOrDefault(name.toLowerCase(), 0.0);
 
         Product p = new Product();
         p.setName(name + " (x" + quantity + ")");
@@ -67,6 +71,10 @@ public class ProductController {
         saleRepo.save(sale);
 
         // CRITICAL: Clear the current products table so the next customer starts with a fresh bill
+        // NOTE: This approach clears the entire 'products' table. In a multi-user environment,
+        // this would clear other users' active bills. For a single-user POS, it might be acceptable.
+        // A more robust solution for multi-user systems would involve associating products with a
+        // specific bill ID or user session and deleting only those.
         repo.deleteAll();
     }
 

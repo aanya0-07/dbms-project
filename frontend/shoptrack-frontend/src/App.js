@@ -117,7 +117,17 @@ function App() {
   const fetchInventory = async () => {
     try {
       const r = await axios.get(`${API}/inventory`);
-      setInventory(r.data);
+      const fromDb = r.data || {};
+      // One-time migration: stock saved only in this browser (before the backend
+      // supported inventory) is pushed to the database if the DB has no row for it.
+      const saved = JSON.parse(localStorage.getItem('shoptrack_inventory') || '{}');
+      const toMigrate = Object.entries(saved).filter(([name]) => !(name in fromDb));
+      await Promise.all(toMigrate.map(([name, stock]) =>
+        axios.put(`${API}/inventory/${encodeURIComponent(name)}`, { stock })
+      ));
+      const merged = { ...EMPTY_INVENTORY, ...Object.fromEntries(toMigrate), ...fromDb };
+      setInventory(merged);
+      localStorage.setItem('shoptrack_inventory', JSON.stringify(merged));
     } catch {
       const saved = localStorage.getItem('shoptrack_inventory');
       if (saved) setInventory(JSON.parse(saved));
@@ -201,8 +211,11 @@ function App() {
     const updated = { ...inventory, [itemName]: Math.max(0, newStock) };
     setInventory(updated);
     localStorage.setItem('shoptrack_inventory', JSON.stringify(updated));
-    try { await axios.put(`${API}/inventory/${itemName}`, { stock: updated[itemName] }); }
-    catch { /* persisted locally */ }
+    try { await axios.put(`${API}/inventory/${encodeURIComponent(itemName)}`, { stock: updated[itemName] }); }
+    catch (error) {
+      console.error('Inventory save error:', error.response?.data || error.message);
+      showToast(`Stock saved in this browser only — backend update failed.`, 'warning');
+    }
   };
 
   const handleAdjust = (name, delta) => {
